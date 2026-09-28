@@ -48,32 +48,47 @@ export class UrdbDataAdapter implements RateDataAdapter {
       ["direction", "desc"]
     ]);
 
-    let json: UrdbResponseEnvelope;
+    // Everything from the fetch through parsing the response into
+    // UtilityRateOptions lives in one try/catch. It used to end right after
+    // fetchJsonWithRetry, which meant a malformed/unexpected response shape
+    // (json.items not actually an array, etc.) threw a raw, unwrapped
+    // TypeError straight out of this method -- the caller (rateSchedules.ts)
+    // only recognizes UpstreamError specifically, so anything else fell back
+    // to a bare "urdb_unavailable" flag with no detail at all. Confirmed
+    // live in production (2026-09-28): the deployed Rate Explorer showed
+    // exactly that bare flag, with none of the ": <real reason>" detail an
+    // UpstreamError carries -- this is what caused it.
     try {
-      json = (await fetchJsonWithRetry(url, { serviceLabel: "OpenEI URDB" })) as UrdbResponseEnvelope;
+      const json = (await fetchJsonWithRetry(url, { serviceLabel: "OpenEI URDB" })) as UrdbResponseEnvelope;
+
+      if (!Array.isArray(json.items)) {
+        throw new UpstreamError(
+          `OpenEI URDB returned an unexpected response shape (no "items" array) -- got: ${JSON.stringify(json).slice(0, 200)}`
+        );
+      }
+
+      const items = json.items.filter((r) => r.eiaid === params.eiaid && r.utility === params.utilityName);
+
+      const data = buildUtilityRateOptions(items, {
+        eiaid: params.eiaid,
+        utilityName: params.utilityName,
+        state: params.state,
+        sector: params.sector
+      });
+
+      return {
+        data,
+        provenance: {
+          source: "OpenEI Utility Rate Database (URDB)",
+          dataset: `Utility rate schedules -- utility_rates (eiaid ${params.eiaid}, sector ${params.sector})`,
+          sourceUrl: "https://apps.openei.org/USURDB/",
+          retrievedAt
+        }
+      };
     } catch (err) {
       if (err instanceof UpstreamError) throw err;
       throw new UpstreamError(`OpenEI URDB request failed: ${describeFetchError(err)}`);
     }
-
-    const items = (json.items ?? []).filter((r) => r.eiaid === params.eiaid && r.utility === params.utilityName);
-
-    const data = buildUtilityRateOptions(items, {
-      eiaid: params.eiaid,
-      utilityName: params.utilityName,
-      state: params.state,
-      sector: params.sector
-    });
-
-    return {
-      data,
-      provenance: {
-        source: "OpenEI Utility Rate Database (URDB)",
-        dataset: `Utility rate schedules -- utility_rates (eiaid ${params.eiaid}, sector ${params.sector})`,
-        sourceUrl: "https://apps.openei.org/USURDB/",
-        retrievedAt
-      }
-    };
   }
 
   private buildUrl(params: Array<[string, string]>): string {

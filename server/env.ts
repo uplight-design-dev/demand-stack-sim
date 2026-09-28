@@ -38,7 +38,15 @@ export const ENV = {
   OPENEI_API_KEY: process.env.OPENEI_API_KEY ?? "",
   ENERGY_DATA_ADAPTER: (process.env.ENERGY_DATA_ADAPTER ?? "eia") as "eia" | "demo",
   PORT: Number(process.env.PORT ?? 8787),
-  CACHE_DIR: process.env.CACHE_DIR ?? ".cache/energy",
+  // Vercel's serverless functions have a read-only filesystem except /tmp
+  // (process.env.VERCEL is set to "1" there automatically, both at build
+  // and at runtime) -- FileCache's default ".cache/energy" would throw on
+  // every write there. /tmp is also wiped between cold starts on Vercel, so
+  // this is a plain per-instance cache there, not a durable one; that's
+  // fine for FileCache's job (avoiding redundant upstream calls within one
+  // warm instance), same spirit as the Postgres/Redis swap called out in
+  // cache.ts for a real production deployment.
+  CACHE_DIR: process.env.CACHE_DIR ?? (process.env.VERCEL ? "/tmp/dss-cache" : ".cache/energy"),
   NODE_ENV: process.env.NODE_ENV ?? "development"
 };
 

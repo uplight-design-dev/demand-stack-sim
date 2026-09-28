@@ -37,6 +37,25 @@ the OpenEI API unreachable, falls back to a frozen real-data snapshot (see docs/
 | `npm run build` | Production client bundle (`dist/`) + compiled server (`dist-server/`) |
 | `npm start` | Runs the compiled production server (serve `dist/` behind it yourself, or add static-serving -- see docs/ARCHITECTURE.md "Production deployment") |
 
+## Deploying to Vercel
+
+The Express API is wrapped as a single Vercel serverless function (`api/index.ts`) rather than
+run as a long-lived server -- see `vercel.json` for the build/output/rewrite config that makes
+`/api/*` reach it while everything else is served as the static `dist/` build.
+
+After importing the repo into Vercel, set these in the project's **Settings -> Environment
+Variables** (nothing is committed -- `.env.local` is git-ignored):
+
+| Variable | Required for |
+|---|---|
+| `EIA_API_KEY` | Live hourly grid data (falls back to demo data if unset) |
+| `OPENEI_API_KEY` | Live utility rate schedules (falls back to a frozen snapshot if unset) |
+
+No other variables are required -- `CACHE_DIR` automatically points at `/tmp` in Vercel's
+environment (`server/env.ts`), since only `/tmp` is writable there, and it's per-instance rather
+than durable (fine for its job of avoiding redundant upstream calls within one warm function
+instance; see `server/lib/cache.ts` for swapping in a real datastore later).
+
 ## Documentation
 
 See `docs/ARCHITECTURE.md` for the full architecture, EIA routes/facets used, the state-to-BA

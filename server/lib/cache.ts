@@ -69,15 +69,36 @@ export class FileCache implements EnergyCache {
     requestParams: Record<string, unknown>,
     sourceKey: string
   ): Promise<void> {
-    await mkdir(this.dir, { recursive: true });
-    const entry: CacheEntry<T> = {
-      value,
-      retrievedAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + ttlMs).toISOString(),
-      requestParams,
-      sourceKey
-    };
-    await writeFile(this.fileFor(key), JSON.stringify(entry), "utf-8");
+    // Caching is a pure optimization (avoid redundant upstream calls) -- it
+    // must never be able to fail a request. get() already degrades
+    // gracefully (any read/parse error -> "miss"), but this method had no
+    // error handling at all: a write failure here happens inside the
+    // ROUTE's own try/catch (rateSchedules.ts / stateOverview.ts), not
+    // inside the adapter's -- so the route's catch block, which only
+    // recognizes UpstreamError specifically, let a raw filesystem error
+    // (e.g. EROFS/EACCES on Vercel's read-only filesystem when CACHE_DIR
+    // resolves to a non-writable path) fall through as an unrecognized
+    // exception, producing a bare, detail-free "*_unavailable" flag with no
+    // explanation. Confirmed live in production (2026-09-28): the deployed
+    // Rate Explorer's live URDB call was succeeding (provenance showed a
+    // fresh retrievedAt), yet the response still carried the bare fallback
+    // flag -- meaning the failure was happening AFTER the adapter returned,
+    // exactly where this cache.set() call sits. This now catches and
+    // swallows any write failure instead of letting it propagate: worst
+    // case is a cache miss next time, never a broken response.
+    try {
+      await mkdir(this.dir, { recursive: true });
+      const entry: CacheEntry<T> = {
+        value,
+        retrievedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + ttlMs).toISOString(),
+        requestParams,
+        sourceKey
+      };
+      await writeFile(this.fileFor(key), JSON.stringify(entry), "utf-8");
+    } catch (err) {
+      console.warn(`FileCache.set: failed to write cache entry (dir=${this.dir}):`, err);
+    }
   }
 }
 
